@@ -1,0 +1,23 @@
+# WHY THIS FILE EXISTS: ConfigMap that holds env.js for the Angular frontend.
+# The init container in the frontend Deployment copies this into the nginx html directory,
+# injecting runtime environment variables without rebuilding the Docker image.
+# This mirrors the docker-compose entrypoint.sh pattern.
+# To add a new runtime variable: add it to values.yaml frontend.env AND assets/env.js.
+
+{{- if .Values.frontend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "webapp.fullname" . }}-frontend-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  env.js: |
+    (function (window) {
+      window.__env = window.__env || {};
+      window.__env.API_BASE_URL = {{ .Values.frontend.env.API_BASE_URL | quote }};
+      window.__env.PRODUCTION = {{ .Values.frontend.env.PRODUCTION }};
+    })(window);
+{{- end }}

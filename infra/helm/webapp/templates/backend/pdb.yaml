@@ -1,0 +1,19 @@
+# WHY THIS FILE EXISTS: PodDisruptionBudget prevents all backend pods from being evicted
+# simultaneously during node drain, cluster upgrades, or disruption events.
+# In production, minAvailable: 1 ensures at least one pod is always serving traffic.
+
+{{- if and .Values.backend.enabled .Values.backend.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "webapp.fullname" . }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: {{ .Values.backend.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "webapp.backend.selectorLabels" . | nindent 6 }}
+{{- end }}

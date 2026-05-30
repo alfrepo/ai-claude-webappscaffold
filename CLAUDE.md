@@ -29,6 +29,28 @@
 
 ---
 
+## MANDATORY DEPLOYMENT ARTIFACTS
+
+Both artifacts are mandatory. Neither is optional. A feature is not complete until it works
+in **both** deployment targets.
+
+| # | Artifact | File / Directory | Environment |
+|---|----------|-----------------|-------------|
+| 1 | Docker Compose | `docker-compose.yml` | Local development, CI E2E |
+| 2 | Helm Chart | `infra/helm/webapp/` | Kubernetes (dev cluster, staging, prod) |
+
+**Rules:**
+- A new environment variable added to the backend or frontend **must** be added to both
+  `docker-compose.yml` (as an `environment:` entry) AND `infra/helm/webapp/templates/`
+  (as a `ConfigMap` key or `ExternalSecret` field) **in the same PR**.
+- The Helm chart must pass `helm lint infra/helm/webapp/` with zero warnings before merge.
+- The Helm chart must render without error: `helm template webapp infra/helm/webapp/ > /dev/null`
+- `docker compose up --build -d` must start cleanly from a cold state — no manual steps.
+- No plaintext secrets in any `values*.yaml` file. Use `ExternalSecret` for all credentials.
+- See `INTRO.md §3` for the full deployment artifact specification.
+
+---
+
 ## MANDATORY WORKFLOW
 
 **Enforce this exact order for EVERY feature, no exceptions:**
@@ -218,10 +240,67 @@ Feature: User Registration
 
 - `README.md` at root: quickstart in under 5 commands
 - `/docs/ARCHITECTURE.md`: C4 model level 1+2 in Mermaid (keep it current)
+- `/docs/ARC42.md`: ARC42 solution architecture — see maintenance rules below
 - Every public Java class/method MUST have Javadoc (enforced by Checkstyle)
 - Every Angular public component MUST have JSDoc + `@Input`/`@Output` documented
 - OpenAPI spec is auto-published to `/docs/api/` via Redoc on CI (GitHub Pages)
 - Never delete an ADR — mark it `deprecated` or `superseded`
+
+---
+
+## ARC42 MAINTENANCE CONTRACT
+
+`/docs/ARC42.md` is a living document. Claude Code MUST update it in the **same PR** as the
+code change that invalidates any section. A PR that changes architecture without updating
+ARC42 is incomplete and must not be merged.
+
+### Trigger table — what change requires which ARC42 section update
+
+| Code / config change | ARC42 section(s) to update |
+|----------------------|---------------------------|
+| New bounded context, feature module, or `features/<name>/` directory | §5.2 (frontend whitebox), §6 (if new runtime flow), §8 (if new crosscutting concern) |
+| New external system integrated (email, payment, IdP, …) | §3.1 Business Context diagram, §3.2 Technical Context table, §6 sequence diagram |
+| New AWS service added to Terraform or Helm | §7.2 Deployment diagram, §7.4 Network topology, §10 (if new quality scenario) |
+| New Kubernetes resource type added to Helm chart | §7.2 Helm chart section, §8.1 Security table (if security-relevant) |
+| New Spring profile or port number changed | §3.3 Ports table, §7.3 Environment matrix |
+| New environment variable added (backend or frontend) | §8.4 Configuration Management table |
+| New architectural pattern adopted | §4.1 Core Architectural Patterns table |
+| Technology swap or new dependency (framework, library) | §4.2 Key Technology Decisions table, §12 Glossary |
+| New ADR created | §9 Architecture Decisions index table |
+| New quality requirement or SLA agreed | §10.1 Quality Tree, §10.2 Quality Scenarios table |
+| Risk identified or resolved | §11.1 Risks table |
+| Risk accepted as technical debt | §11.2 Technical Debt table |
+| New term introduced in the domain or codebase | §12 Glossary |
+| Deployment artifact changed (new Helm template, docker-compose service) | §7.1 or §7.2 |
+| Database schema management rule changed | §8.8 Database Schema Management |
+| Error handling pattern changed | §8.3 Error Handling |
+| Observability backend changed | §8.2 Observability table |
+
+### How to update ARC42
+
+1. Find the section(s) from the trigger table above.
+2. Update the text, table row, or Mermaid diagram to reflect the new state.
+3. If a Mermaid diagram needs a new node: add it and re-verify the diagram renders in GitHub.
+4. Update the `**Last updated:**` date at the top of `docs/ARC42.md`.
+5. If a section becomes stale before you have time to fix it, add an HTML comment:
+   `<!-- ARCHITECTURE-STALE: <reason> -->` directly above the stale content.
+   Claude Code will detect this marker during the next PR review and update the section.
+
+### Staleness detection (CI advisory check)
+
+The CI pipeline runs this check and prints a warning (non-blocking) if stale markers exist:
+```bash
+grep -n "ARCHITECTURE-STALE" docs/ARC42.md && echo "⚠ ARC42 has stale sections — update before merge"
+```
+A PR containing `ARCHITECTURE-STALE` markers **must not be merged** unless the stale section
+is genuinely unresolvable at merge time and a follow-up ticket exists.
+
+### What ARC42 must NOT contain
+
+- Implementation details that belong in code comments or Javadoc
+- Step-by-step how-to instructions (those belong in README or CLAUDE.md)
+- Decision rationale (that belongs in ADRs — §9 links to them)
+- Temporary state (in-progress work, sprint plans, ticket numbers)
 
 ---
 

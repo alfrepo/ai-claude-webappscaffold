@@ -1,0 +1,18 @@
+# WHY THIS FILE EXISTS: Non-sensitive backend configuration as a Kubernetes ConfigMap.
+# Sensitive values (DB_PASSWORD, JWT_SECRET) are in ExternalSecret, not here.
+# To add a new non-sensitive env var: add it to values.yaml backend.env.
+
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "webapp.fullname" . }}-backend-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+data:
+  {{- range $key, $value := .Values.backend.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}

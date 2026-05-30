@@ -1,0 +1,27 @@
+# WHY THIS FILE EXISTS: Helm chart metadata for the webapp application.
+# This chart deploys both backend and frontend as a single release.
+# To add a dependency (e.g., PostgreSQL for local cluster): add to the 'dependencies' section
+# and run: helm dependency update infra/helm/webapp/
+
+apiVersion: v2
+name: webapp
+description: |
+  Production-grade web application — backend (Spring Boot) and frontend (Angular/nginx).
+  Deploys to Kubernetes via Helm. All secrets are managed via ExternalSecret (AWS Secrets Manager).
+  See INTRO.md §3.2 for the full deployment specification.
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+
+maintainers:
+  - name: Platform Team
+    email: platform@example.com
+
+keywords:
+  - webapp
+  - spring-boot
+  - angular
+
+annotations:
+  # Reference the ADRs that govern infrastructure decisions
+  "app.kubernetes.io/managed-by": "Helm"

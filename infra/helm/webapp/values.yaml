@@ -1,0 +1,204 @@
+# WHY THIS FILE EXISTS: Default Helm values — safe for a local or dev cluster.
+# Override per environment using values-dev.yaml, values-staging.yaml, values-prod.yaml.
+# NEVER put secrets here. All credentials come from ExternalSecret (AWS Secrets Manager).
+# To add a new config value: add it here with a safe default, then reference it in templates/.
+# See INTRO.md §3.2 for the full specification of what must be in this chart.
+
+# ── Global ────────────────────────────────────────────────────────────────────
+global:
+  # Registry prefix for all images (set to your ECR registry in production)
+  imageRegistry: ""
+  # Labels added to every resource
+  labels: {}
+  # Annotations added to every resource
+  annotations: {}
+
+# ── Backend ───────────────────────────────────────────────────────────────────
+backend:
+  enabled: true
+
+  image:
+    repository: webapp-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  # Environment variables — non-sensitive config only
+  # Sensitive values (DB_PASSWORD, JWT_SECRET) come from ExternalSecret
+  env:
+    SPRING_PROFILES_ACTIVE: dev
+    FRONTEND_ORIGIN: http://localhost:4200
+    LOG_LEVEL: INFO
+
+  # AWS Secrets Manager secret name that ExternalSecret reads from
+  # Set to your actual Secrets Manager path per environment
+  externalSecret:
+    secretName: webapp/dev/backend
+    refreshInterval: 1h
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  # Liveness probe: restarts the pod if the JVM hangs
+  livenessProbe:
+    httpGet:
+      path: /actuator/health/liveness
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+  # Readiness probe: removes pod from Service endpoints if DB is unavailable
+  readinessProbe:
+    httpGet:
+      path: /actuator/health/readiness
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+  # Security context — enforced on every pod (see INTRO.md §10)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false          # Enable in prod via values-prod.yaml
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: false          # Enable in prod via values-prod.yaml
+    minAvailable: 1
+
+  serviceAccount:
+    create: true
+    name: ""
+    # IRSA annotation — set in values-dev/prod.yaml to the actual role ARN
+    annotations: {}
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+frontend:
+  enabled: true
+
+  image:
+    repository: webapp-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Runtime environment injection via ConfigMap → env.js
+  # The Deployment mounts this ConfigMap and writes it to /usr/share/nginx/html/assets/env.js
+  env:
+    API_BASE_URL: http://webapp-backend:8080
+    PRODUCTION: "false"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101          # nginx default user UID
+    runAsGroup: 101
+    readOnlyRootFilesystem: false   # nginx writes pid and temp files
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx          # Set to "alb" for AWS ALB Ingress Controller
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: webapp.local     # Override in values-dev/prod.yaml with real hostname
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /actuator
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls: []                   # Set in values-prod.yaml with ACM certificate ARN or TLS secret
+
+# ── NetworkPolicy ─────────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true             # Deny-all by default, explicit rules below
+
+# ── External Secrets Operator ─────────────────────────────────────────────────
+# Requires External Secrets Operator installed in the cluster
+# https://external-secrets.io/
+externalSecrets:
+  enabled: true
+  # AWS Secrets Manager store name (must be pre-configured in the cluster)
+  secretStoreName: aws-secrets-manager

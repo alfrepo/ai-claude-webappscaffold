@@ -1,0 +1,87 @@
+# WHY THIS FILE EXISTS: Kubernetes Deployment for the Angular frontend (nginx).
+# The runtime API URL is injected via a ConfigMap mounted as env.js,
+# mirroring the Docker entrypoint.sh pattern used in docker-compose.yml.
+
+{{- if .Values.frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "webapp.fullname" . }}-frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  {{- if not .Values.frontend.autoscaling.enabled }}
+  replicas: {{ .Values.frontend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "webapp.frontend.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "webapp.frontend.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/frontend/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        fsGroup: 101
+      terminationGracePeriodSeconds: 10
+      initContainers:
+        # Init container writes env.js from ConfigMap before nginx starts
+        - name: env-injector
+          image: {{ include "webapp.image" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image) }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp /env-config/env.js /usr/share/nginx/html/assets/env.js
+              echo "env.js injected from ConfigMap"
+          volumeMounts:
+            - name: env-config
+              mountPath: /env-config
+            - name: html
+              mountPath: /usr/share/nginx/html/assets
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+      containers:
+        - name: frontend
+          image: {{ include "webapp.image" (dict "registry" .Values.global.imageRegistry "image" .Values.frontend.image) }}
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.frontend.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.frontend.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.frontend.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html/assets
+      volumes:
+        - name: env-config
+          configMap:
+            name: {{ include "webapp.fullname" . }}-frontend-env
+        - name: html
+          emptyDir: {}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

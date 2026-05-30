@@ -1,0 +1,87 @@
+# WHY THIS FILE EXISTS: Production overrides — applied on top of values.yaml.
+# NEVER put secrets here. All credentials come from ExternalSecret (AWS Secrets Manager).
+# Run from CI only: helm upgrade --install webapp infra/helm/webapp/ \
+#   --values infra/helm/webapp/values.yaml \
+#   --values infra/helm/webapp/values-prod.yaml \
+#   --set backend.image.tag=${IMAGE_TAG} --atomic
+
+backend:
+  replicaCount: 2           # Minimum 2 for high availability
+
+  env:
+    SPRING_PROFILES_ACTIVE: prod
+    FRONTEND_ORIGIN: https://webapp.example.com
+    LOG_LEVEL: WARN
+
+  externalSecret:
+    secretName: webapp/prod/backend
+    refreshInterval: 15m
+
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/webapp-prod-task-role
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+          topologyKey: kubernetes.io/hostname
+
+frontend:
+  replicaCount: 2
+
+  env:
+    API_BASE_URL: https://webapp.example.com
+    PRODUCTION: "true"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Rate limiting — adjust thresholds per load test results
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+  hosts:
+    - host: webapp.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /actuator/health
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    - hosts: [webapp.example.com]
+      secretName: webapp-prod-tls

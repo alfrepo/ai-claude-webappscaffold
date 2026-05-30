@@ -1,0 +1,94 @@
+# WHY THIS FILE EXISTS: Kubernetes Deployment for the Spring Boot backend.
+# Enforces: non-root user, read-only filesystem, resource limits, liveness/readiness probes.
+# Config is mounted from a ConfigMap; secrets from ExternalSecret-generated Secret.
+# To add a new environment variable: add it to values.yaml backend.env (non-sensitive)
+# or to the ExternalSecret template (sensitive). Never hardcode values here.
+
+{{- if .Values.backend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "webapp.fullname" . }}-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "webapp.backend.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0       # Zero-downtime rolling update
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "webapp.backend.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Force pod restart when ConfigMap changes
+        checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "webapp.backend.serviceAccountName" . }}
+      securityContext:
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: backend
+          image: {{ include "webapp.image" (dict "registry" .Values.global.imageRegistry "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "webapp.fullname" . }}-backend-config
+          env:
+            # Sensitive values injected from ExternalSecret-generated Secret
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "webapp.fullname" . }}-backend-secrets
+                  key: DB_PASSWORD
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "webapp.fullname" . }}-backend-secrets
+                  key: DB_USERNAME
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "webapp.fullname" . }}-backend-secrets
+                  key: DB_URL
+          livenessProbe:
+            {{- toYaml .Values.backend.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.backend.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.backend.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp              # Required for Spring Boot temp files
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

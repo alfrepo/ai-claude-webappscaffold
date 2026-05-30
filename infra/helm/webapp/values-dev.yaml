@@ -1,0 +1,36 @@
+# WHY THIS FILE EXISTS: Dev cluster overrides — applied on top of values.yaml.
+# Run: helm upgrade --install webapp infra/helm/webapp/ \
+#        --values infra/helm/webapp/values.yaml \
+#        --values infra/helm/webapp/values-dev.yaml
+
+backend:
+  env:
+    SPRING_PROFILES_ACTIVE: dev
+    FRONTEND_ORIGIN: https://webapp.dev.example.com
+  externalSecret:
+    secretName: webapp/dev/backend
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/webapp-dev-task-role
+
+frontend:
+  env:
+    API_BASE_URL: https://webapp.dev.example.com
+    PRODUCTION: "false"
+
+ingress:
+  hosts:
+    - host: webapp.dev.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /actuator/health
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    - hosts: [webapp.dev.example.com]
+      secretName: webapp-dev-tls

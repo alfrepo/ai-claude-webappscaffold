@@ -1,0 +1,41 @@
+# WHY THIS FILE EXISTS: Ingress resource — routes external HTTPS traffic to backend and frontend.
+# Paths are ordered: /api and /actuator/health route to backend; / routes to frontend.
+# To add a new public API path: add a new path entry before the catch-all /.
+# For AWS ALB Ingress Controller: set ingress.className: "alb" and add ALB-specific annotations.
+
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "webapp.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "webapp.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "webapp.fullname" $ }}-{{ .service }}
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}
