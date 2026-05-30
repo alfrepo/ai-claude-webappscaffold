@@ -1,0 +1,12 @@
+<!--
+  WHY THIS FILE EXISTS: Footer template.
+  <footer> has role="contentinfo" (implicit at page level, explicit here for clarity).
+  All text from i18n keys — no hardcoded strings.
+-->
+<footer
+  role="contentinfo"
+  [attr.aria-label]="'FOOTER.ARIA_LABEL' | translate"
+  class="surface-800 text-white px-4 py-3 text-center"
+>
+  <small>{{ 'FOOTER.COPYRIGHT' | translate }}</small>
+</footer>

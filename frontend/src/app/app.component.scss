@@ -1,0 +1,10 @@
+/* WHY THIS FILE EXISTS: App shell component styles.
+ * The host element uses flex layout to push the footer to the bottom.
+ * All other styles belong in layout component stylesheets or global styles.scss.
+ */
+
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}

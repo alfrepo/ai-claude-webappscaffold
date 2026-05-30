@@ -1,0 +1,142 @@
+# WHY THIS FILE EXISTS: Deployment pipeline — runs only on merge to main.
+# Builds Docker images, pushes to ECR, and deploys to ECS via Terraform.
+# Prerequisites:
+#   - AWS_ROLE_ARN secret configured (IRSA/OIDC — no long-lived keys)
+#   - ECR_BACKEND_REPO and ECR_FRONTEND_REPO secrets configured
+#   - Terraform state bucket and DynamoDB lock table provisioned
+#   - GitHub OIDC provider configured in AWS IAM
+# To deploy to a new environment: duplicate the deploy-to-ecs job and change the env.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+
+env:
+  AWS_REGION: us-east-1
+  JAVA_VERSION: '21'
+  NODE_VERSION: '20'
+
+jobs:
+  # ── Build + Push Docker Images ────────────────────────────────────────────────
+  build-and-push:
+    name: Build + Push Docker Images to ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Required for OIDC authentication to AWS
+      contents: read
+    outputs:
+      backend-image: ${{ steps.backend-meta.outputs.tags }}
+      frontend-image: ${{ steps.frontend-meta.outputs.tags }}
+      image-tag: ${{ steps.image-tag.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate image tag from git SHA
+        id: image-tag
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Backend image ──────────────────────────────────────────────────────
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Build backend JAR
+        working-directory: backend
+        run: ./mvnw package -B --no-transfer-progress -DskipTests
+
+      - name: Build and push backend Docker image
+        id: backend-meta
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_BACKEND_REPO }}:${{ steps.image-tag.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_BACKEND_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Frontend image ─────────────────────────────────────────────────────
+      - name: Build and push frontend Docker image
+        id: frontend-meta
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_FRONTEND_REPO }}:${{ steps.image-tag.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_FRONTEND_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to ECS via Terraform ───────────────────────────────────────────────
+  deploy-to-ecs:
+    name: Deploy to ECS (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~1.7'
+
+      - name: Terraform Init
+        working-directory: infra/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+
+      - name: Terraform Plan
+        working-directory: infra/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          terraform plan \
+            -var="backend_image_tag=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="frontend_image_tag=${{ needs.build-and-push.outputs.image-tag }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: infra/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Wait for ECS service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --services backend frontend

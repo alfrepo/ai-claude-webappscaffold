@@ -1,0 +1,23 @@
+# WHY THIS FILE EXISTS: Local development profile — used when running via docker-compose
+# or directly from IDE with SPRING_PROFILES_ACTIVE=local.
+# Connects to the local PostgreSQL container defined in docker-compose.yml.
+# All credentials here are for local dev only — CHANGE_FOR_PRODUCTION.
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/webapp}
+    username: ${DB_USERNAME:webapp}
+    password: ${DB_PASSWORD:webapp_dev}   # CHANGE_FOR_PRODUCTION
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate    # Flyway manages the schema; Hibernate only validates
+
+logging:
+  level:
+    root: INFO
+    com.example.webapp: DEBUG
+    org.springframework.security: DEBUG
+    org.flywaydb: DEBUG

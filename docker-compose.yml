@@ -1,0 +1,112 @@
+# WHY THIS FILE EXISTS: Local development environment that mirrors production topology.
+# Provides backend, frontend, PostgreSQL, and LocalStack (AWS service mocks).
+# All passwords below are marked CHANGE_FOR_PRODUCTION.
+# To add a new service, add a named service block and connect it to the 'app-network'.
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: webapp-postgres
+    environment:
+      POSTGRES_DB: webapp
+      POSTGRES_USER: webapp          # CHANGE_FOR_PRODUCTION
+      POSTGRES_PASSWORD: webapp_dev  # CHANGE_FOR_PRODUCTION
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/scripts/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webapp -d webapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # ── LocalStack (AWS service mocks) ────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3
+    container_name: webapp-localstack
+    environment:
+      SERVICES: s3,secretsmanager,sqs,sns,xray
+      DEBUG: 0
+      AWS_DEFAULT_REGION: us-east-1
+      LOCALSTACK_VOLUME_DIR: /var/lib/localstack
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./infra/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app-network
+
+  # ── Backend (Spring Boot) ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: webapp-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/webapp
+      DB_USERNAME: webapp              # CHANGE_FOR_PRODUCTION
+      DB_PASSWORD: webapp_dev          # CHANGE_FOR_PRODUCTION
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test          # CHANGE_FOR_PRODUCTION — use IAM roles in prod
+      AWS_SECRET_ACCESS_KEY: test      # CHANGE_FOR_PRODUCTION — use IAM roles in prod
+      AWS_DEFAULT_REGION: us-east-1
+      FRONTEND_ORIGIN: http://localhost:4200
+      LOG_LEVEL: INFO
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app-network
+
+  # ── Frontend (Angular served by nginx) ───────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: webapp-frontend
+    environment:
+      API_BASE_URL: http://localhost:8080
+    ports:
+      - "4200:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+volumes:
+  postgres-data:
+  localstack-data:
+
+networks:
+  app-network:
+    driver: bridge

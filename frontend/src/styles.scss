@@ -1,0 +1,51 @@
+/*
+ * WHY THIS FILE EXISTS: Global styles for the Angular application.
+ * PrimeNG, PrimeFlex, and PrimeIcons are imported via angular.json (not here)
+ * to allow Angular to optimize them during build.
+ * Application-level custom styles go here. Component-specific styles go in *.component.scss.
+ * Color variables follow WCAG AA contrast ratio requirements (4.5:1 minimum).
+ */
+
+/* Focus indicators: never remove or hide outline — keyboard navigation depends on it */
+:focus-visible {
+  outline: 2px solid var(--primary-color, #2196f3);
+  outline-offset: 2px;
+}
+
+/* Skip-to-content link: visually hidden until focused (keyboard users) */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: var(--primary-color, #2196f3);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  z-index: 9999;
+  text-decoration: none;
+  font-weight: bold;
+
+  &:focus {
+    top: 0;
+  }
+}
+
+/* Base layout */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: var(--font-family, 'Roboto', sans-serif);
+}
+
+/* Screen-reader only utility class */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  WHY THIS FILE EXISTS: Root HTML document for the Angular SPA.
+  The window.__env object is injected at runtime by entrypoint.sh (Docker)
+  or by env.js (local dev) to pass environment variables to Angular.
+  The lang attribute is required for accessibility (WCAG 3.1.1).
+  To add a new runtime environment variable: add it to env.js, entrypoint.sh,
+  and the AppEnvironment interface in src/environments/environment.ts.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebApp</title>
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="[REPLACE WITH APPLICATION DESCRIPTION]" />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <!-- Runtime environment injection: populated by entrypoint.sh in Docker -->
+    <script src="assets/env.js"></script>
+  </head>
+  <body class="p-0 m-0">
+    <app-root></app-root>
+  </body>
+</html>

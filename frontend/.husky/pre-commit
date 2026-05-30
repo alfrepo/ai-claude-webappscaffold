@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+# WHY THIS FILE EXISTS: Pre-commit hook that runs lint-staged on changed files.
+# This prevents committing code that fails lint or formatting checks.
+# Configured by Husky — managed in package.json "prepare" script.
+# To skip in an emergency (not recommended): git commit --no-verify
+. "$(dirname -- "$0")/_/husky.sh"
+
+cd frontend && npx lint-staged

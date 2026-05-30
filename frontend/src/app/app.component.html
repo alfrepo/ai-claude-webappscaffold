@@ -1,0 +1,22 @@
+<!--
+  WHY THIS FILE EXISTS: Root app component template — the application shell layout.
+  The skip link is the FIRST focusable element on every page (WCAG 2.4.1).
+  The <main> element has id="main-content" so the skip link works correctly.
+  Do not add content here — add it to feature components loaded via the router outlet.
+-->
+
+<!-- Skip-to-content link: must be the first focusable element on the page -->
+<a class="skip-link" href="#main-content">
+  {{ 'NAV.SKIP_TO_CONTENT' | translate }}
+</a>
+
+<!-- Application header -->
+<app-header></app-header>
+
+<!-- Main content area: all feature content renders here via router -->
+<main id="main-content" role="main" class="flex-grow-1">
+  <router-outlet></router-outlet>
+</main>
+
+<!-- Application footer -->
+<app-footer></app-footer>

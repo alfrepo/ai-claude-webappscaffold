@@ -1,0 +1,191 @@
+# WHY THIS FILE EXISTS: This is the single source of truth for the REST API contract.
+# ALL API changes start here. Generate stubs with: mvn generate-sources -pl backend/api
+# Never hand-edit generated files in target/generated-sources/.
+# To add an endpoint: add it to the 'paths' section, define schemas in 'components',
+# then regenerate. See CLAUDE.md section "API / CONTRACT-FIRST RULES" for requirements.
+
+openapi: "3.1.0"
+
+info:
+  title: WebApp API
+  description: |
+    Production-grade web application REST API.
+
+    **Contract-First:** This spec is generated before any implementation.
+    All endpoints follow RFC 7807 for error responses.
+    Authentication uses JWT Bearer tokens.
+  version: "0.0.1"
+  contact:
+    name: Platform Team
+    email: platform@example.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.dev.example.com
+    description: Development environment
+  - url: https://api.staging.example.com
+    description: Staging environment
+
+tags:
+  - name: health
+    description: System health and operational endpoints
+
+paths:
+  /actuator/health:
+    get:
+      tags: [health]
+      summary: Application health check
+      description: |
+        Returns the health status of the application and its dependencies.
+        Used by ECS health checks, load balancer target group checks, and monitoring.
+        Returns 200 when UP, 503 when DOWN or OUT_OF_SERVICE.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Application is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: "UP"
+                components:
+                  db:
+                    status: "UP"
+                  diskSpace:
+                    status: "UP"
+        "503":
+          description: Application is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      description: Spring Boot Actuator health response
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+          description: Overall health status
+          example: UP
+        components:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/HealthComponent"
+          description: Health of individual components
+
+    HealthComponent:
+      type: object
+      description: Health of a single component
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+          example: UP
+        details:
+          type: object
+          additionalProperties: true
+
+    ProblemDetail:
+      type: object
+      description: RFC 7807 Problem Details for HTTP APIs
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI reference identifying the problem type
+          example: "https://example.com/problems/validation-error"
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type
+          example: "Validation Error"
+        status:
+          type: integer
+          description: HTTP status code
+          example: 400
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+          example: "The field 'email' must be a valid email address"
+        instance:
+          type: string
+          format: uri
+          description: URI reference identifying the specific occurrence
+          example: "/api/v1/users/register"
+        errors:
+          type: array
+          description: Field-level validation errors
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    FieldError:
+      type: object
+      description: A single field-level validation error
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          example: "email"
+        message:
+          type: string
+          example: "must be a valid email address"
+        rejectedValue:
+          description: The value that was rejected
+
+  responses:
+    BadRequest:
+      description: Invalid request — validation error (RFC 7807)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    UnprocessableEntity:
+      description: Business rule violation
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer token — obtain via /api/v1/auth/login
+
+security:
+  - bearerAuth: []

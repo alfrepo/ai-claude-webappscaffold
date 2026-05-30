@@ -1,0 +1,23 @@
+<!--
+  WHY THIS FILE EXISTS: OWASP Dependency Check suppressions for confirmed false positives.
+  NEVER suppress a real vulnerability. Each suppression must include:
+    - The CVE being suppressed
+    - Why it is a false positive (e.g., the vulnerable code path is not reachable)
+    - The date it was reviewed and the reviewer's name
+    - A re-review date (suppression should expire annually)
+  To add a suppression: use the <suppress> element below with full justification.
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+  <!-- Example suppression template (remove this and add real ones as needed):
+  <suppress>
+    <notes>
+      CVE-YYYY-NNNNN: False positive. Library foo-bar uses the vulnerable
+      transitive dependency only for build-time annotation processing,
+      not at runtime. Reviewed: 2026-05-30 by platform-team. Re-review: 2027-05-30.
+    </notes>
+    <cve>CVE-YYYY-NNNNN</cve>
+  </suppress>
+  -->
+
+</suppressions>

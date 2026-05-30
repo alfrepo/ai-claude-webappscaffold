@@ -1,0 +1,38 @@
+{
+  "APP": {
+    "TITLE": "WebApp",
+    "DESCRIPTION": "Replace this with your application description"
+  },
+  "NAV": {
+    "SKIP_TO_CONTENT": "Skip to main content",
+    "HOME": "Home"
+  },
+  "HEADER": {
+    "TITLE": "WebApp",
+    "ARIA_LABEL": "Application header"
+  },
+  "FOOTER": {
+    "COPYRIGHT": "© 2026 Example Company. All rights reserved.",
+    "ARIA_LABEL": "Application footer"
+  },
+  "COMMON": {
+    "LOADING": "Loading...",
+    "ERROR": "An error occurred. Please try again.",
+    "SAVE": "Save",
+    "CANCEL": "Cancel",
+    "DELETE": "Delete",
+    "CONFIRM": "Confirm",
+    "BACK": "Back",
+    "NEXT": "Next",
+    "CLOSE": "Close",
+    "SEARCH": "Search",
+    "NO_RESULTS": "No results found."
+  },
+  "ERRORS": {
+    "REQUIRED": "This field is required.",
+    "INVALID_EMAIL": "Please enter a valid email address.",
+    "MIN_LENGTH": "Minimum length is {{min}} characters.",
+    "MAX_LENGTH": "Maximum length is {{max}} characters.",
+    "GENERIC": "Something went wrong. Please try again later."
+  }
+}

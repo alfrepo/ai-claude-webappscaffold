@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /mnt/d/1PROJEKTE/ai-claude-webappscaffold log --oneline -5)",
+      "Bash(curl -sL https://raw.githubusercontent.com/apache/maven-wrapper/maven-wrapper-3.2.0/maven-wrapper-distribution/src/resources/mvnw -o /mnt/d/1PROJEKTE/ai-claude-webappscaffold/backend/mvnw)",
+      "Bash(chmod +x /mnt/d/1PROJEKTE/ai-claude-webappscaffold/backend/mvnw)"
+    ]
+  }
+}

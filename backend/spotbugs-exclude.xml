@@ -1,0 +1,20 @@
+<!--
+  WHY THIS FILE EXISTS: SpotBugs exclusions for known false positives.
+  Add exclusions sparingly — each one must be justified with a comment.
+  Generated code is excluded globally; do not add generated paths here,
+  instead configure the plugin in pom.xml to skip them.
+  To add an exclusion: document the bug pattern, class, and reason.
+-->
+<FindBugsFilter xmlns="https://github.com/spotbugs/filter/3.0.0">
+
+  <!-- Exclude Spring-generated proxy classes (always false positives) -->
+  <Match>
+    <Class name="~.*\$\$SpringCGLIB\$\$.*"/>
+  </Match>
+
+  <!-- Exclude generated OpenAPI model classes -->
+  <Match>
+    <Package name="~com\.example\.webapp\.api\.generated.*"/>
+  </Match>
+
+</FindBugsFilter>

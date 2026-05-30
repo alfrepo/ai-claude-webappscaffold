@@ -1,0 +1,22 @@
+# WHY THIS FILE EXISTS: Test profile configuration.
+# Testcontainers overrides the datasource URL at runtime via @DynamicPropertySource.
+# This file provides other test-specific settings.
+
+spring:
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+app:
+  security:
+    frontend-origin: http://localhost:4200
+
+logging:
+  level:
+    root: WARN
+    com.example.webapp: INFO

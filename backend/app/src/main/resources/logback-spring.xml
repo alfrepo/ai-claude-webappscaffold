@@ -1,0 +1,46 @@
+<!--
+  WHY THIS FILE EXISTS: Configures structured JSON logging for all environments.
+  JSON format is required for CloudWatch Logs Insights queries and ELK/OpenSearch ingestion.
+  The logstash-logback-encoder library adds traceId/spanId automatically from MDC
+  when Micrometer Tracing is on the classpath.
+  To add a custom JSON field: add a <customField> to the LogstashEncoder configuration.
+  NEVER log PII (email, name, SSN, payment data) — the encoder does not filter it.
+-->
+<configuration>
+  <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="webapp"/>
+
+  <!-- Console appender: JSON to stdout (required for 12-Factor/containers) -->
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <customFields>{"service":"${appName}"}</customFields>
+      <fieldNames>
+        <timestamp>timestamp</timestamp>
+        <version>[ignore]</version>
+        <levelValue>[ignore]</levelValue>
+      </fieldNames>
+      <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+        <maxDepthPerCause>20</maxDepthPerCause>
+        <shortenedClassNameLength>40</shortenedClassNameLength>
+        <rootCauseFirst>true</rootCauseFirst>
+      </throwableConverter>
+    </encoder>
+  </appender>
+
+  <!-- Async wrapper to avoid blocking on I/O during log writes -->
+  <appender name="ASYNC_STDOUT" class="ch.qos.logback.classic.AsyncAppender">
+    <appender-ref ref="STDOUT"/>
+    <queueSize>512</queueSize>
+    <discardingThreshold>0</discardingThreshold>
+  </appender>
+
+  <!-- Root logger: INFO in prod, DEBUG in local (controlled by application-{profile}.yml) -->
+  <root level="INFO">
+    <appender-ref ref="ASYNC_STDOUT"/>
+  </root>
+
+  <!-- Reduce noise from framework internals -->
+  <logger name="org.hibernate.SQL" level="WARN"/>
+  <logger name="org.hibernate.type" level="WARN"/>
+  <logger name="com.zaxxer.hikari" level="WARN"/>
+  <logger name="org.springframework.web.servlet.mvc.method.annotation" level="WARN"/>
+</configuration>

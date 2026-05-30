@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WHY THIS FILE EXISTS: Root POM for the Maven multi-module build.
+  It manages ALL dependency versions centrally via Spring Boot BOM and explicit
+  <dependencyManagement> entries. No module should declare a version for a
+  managed dependency. To add a new dependency: add to <dependencyManagement>
+  here, then reference it (without version) in the child module's pom.xml.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.example</groupId>
+  <artifactId>webapp-parent</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>webapp-parent</name>
+  <description>Production-grade web application — parent POM</description>
+
+  <modules>
+    <module>domain</module>
+    <module>api</module>
+    <module>app</module>
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- Dependency versions not in Spring Boot BOM -->
+    <mapstruct.version>1.5.5.Final</mapstruct.version>
+    <lombok.version>1.18.32</lombok.version>
+    <testcontainers.version>1.19.8</testcontainers.version>
+    <logstash-logback.version>7.4</logstash-logback.version>
+    <openapi-generator.version>7.6.0</openapi-generator.version>
+    <springdoc.version>2.5.0</springdoc.version>
+    <problem-spring.version>0.29.1</problem-spring.version>
+
+    <!-- Plugin versions -->
+    <jacoco.version>0.8.12</jacoco.version>
+    <checkstyle.version>3.3.1</checkstyle.version>
+    <spotbugs.version>4.8.5.0</spotbugs.version>
+    <owasp-dependency-check.version>9.2.0</owasp-dependency-check.version>
+
+    <!-- JaCoCo coverage thresholds — raise these as coverage improves, never lower -->
+    <jacoco.line.coverage.minimum>0.80</jacoco.line.coverage.minimum>
+    <jacoco.branch.coverage.minimum>0.75</jacoco.branch.coverage.minimum>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Internal modules -->
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>webapp-domain</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>webapp-api</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- Testcontainers BOM -->
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- MapStruct -->
+      <dependency>
+        <groupId>org.mapstruct</groupId>
+        <artifactId>mapstruct</artifactId>
+        <version>${mapstruct.version}</version>
+      </dependency>
+
+      <!-- Logstash Logback Encoder -->
+      <dependency>
+        <groupId>net.logstash.logback</groupId>
+        <artifactId>logstash-logback-encoder</artifactId>
+        <version>${logstash-logback.version}</version>
+      </dependency>
+
+      <!-- SpringDoc OpenAPI UI -->
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        <version>${springdoc.version}</version>
+      </dependency>
+
+      <!-- Zalando Problem Details (RFC 7807) -->
+      <dependency>
+        <groupId>org.zalando</groupId>
+        <artifactId>problem-spring-web-starter</artifactId>
+        <version>${problem-spring.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <!-- JaCoCo: code coverage with enforced thresholds -->
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco.version}</version>
+          <executions>
+            <execution>
+              <id>prepare-agent</id>
+              <goals><goal>prepare-agent</goal></goals>
+            </execution>
+            <execution>
+              <id>report</id>
+              <phase>test</phase>
+              <goals><goal>report</goal></goals>
+            </execution>
+            <execution>
+              <id>check</id>
+              <goals><goal>check</goal></goals>
+              <configuration>
+                <haltOnFailure>true</haltOnFailure>
+                <rules>
+                  <rule>
+                    <element>BUNDLE</element>
+                    <limits>
+                      <limit>
+                        <counter>LINE</counter>
+                        <value>COVEREDRATIO</value>
+                        <minimum>${jacoco.line.coverage.minimum}</minimum>
+                      </limit>
+                      <limit>
+                        <counter>BRANCH</counter>
+                        <value>COVEREDRATIO</value>
+                        <minimum>${jacoco.branch.coverage.minimum}</minimum>
+                      </limit>
+                    </limits>
+                  </rule>
+                </rules>
+                <excludes>
+                  <!-- Exclude generated code from coverage -->
+                  <exclude>**/generated/**</exclude>
+                  <exclude>**/*Application.class</exclude>
+                </excludes>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+
+        <!-- Checkstyle: Google Java Style -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-checkstyle-plugin</artifactId>
+          <version>${checkstyle.version}</version>
+          <configuration>
+            <configLocation>google_checks.xml</configLocation>
+            <failsOnError>true</failsOnError>
+            <consoleOutput>true</consoleOutput>
+            <excludes>**/generated/**</excludes>
+          </configuration>
+          <executions>
+            <execution>
+              <id>checkstyle</id>
+              <phase>verify</phase>
+              <goals><goal>check</goal></goals>
+            </execution>
+          </executions>
+        </plugin>
+
+        <!-- SpotBugs: static analysis -->
+        <plugin>
+          <groupId>com.github.spotbugs</groupId>
+          <artifactId>spotbugs-maven-plugin</artifactId>
+          <version>${spotbugs.version}</version>
+          <configuration>
+            <effort>Max</effort>
+            <threshold>High</threshold>
+            <failOnError>true</failOnError>
+            <excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
+          </configuration>
+          <executions>
+            <execution>
+              <id>spotbugs</id>
+              <phase>verify</phase>
+              <goals><goal>check</goal></goals>
+            </execution>
+          </executions>
+        </plugin>
+
+        <!-- OWASP Dependency Check -->
+        <plugin>
+          <groupId>org.owasp</groupId>
+          <artifactId>dependency-check-maven</artifactId>
+          <version>${owasp-dependency-check.version}</version>
+          <configuration>
+            <failBuildOnCVSS>7</failBuildOnCVSS>
+            <suppressionFile>owasp-suppressions.xml</suppressionFile>
+          </configuration>
+          <executions>
+            <execution>
+              <goals><goal>check</goal></goals>
+            </execution>
+          </executions>
+        </plugin>
+
+        <!-- OpenAPI Generator -->
+        <plugin>
+          <groupId>org.openapitools</groupId>
+          <artifactId>openapi-generator-maven-plugin</artifactId>
+          <version>${openapi-generator.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <!-- Enforce Java version and Maven version -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce</id>
+            <goals><goal>enforce</goal></goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                </requireJavaVersion>
+                <requireMavenVersion>
+                  <version>[3.9,)</version>
+                </requireMavenVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

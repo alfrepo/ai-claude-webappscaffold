@@ -1,0 +1,64 @@
+# WHY THIS FILE EXISTS: Prevents committing build artifacts, secrets, and generated code.
+# Generated code (target/, dist/, generated/) is excluded — regenerate with build commands.
+# Secret files (.env, *.key, *.pem) are excluded — use AWS Secrets Manager in prod.
+
+# ── Build artifacts ──────────────────────────────────────────────────────────
+target/
+dist/
+out/
+*.class
+*.jar
+*.war
+
+# ── Node.js ──────────────────────────────────────────────────────────────────
+node_modules/
+frontend/.angular/
+frontend/coverage/
+frontend/playwright-report/
+frontend/cucumber-report.*
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ── macOS / Windows ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.jks
+credentials.json
+serviceAccountKey.json
+
+# ── Terraform ────────────────────────────────────────────────────────────────
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.backup
+infra/**/*.tfplan
+infra/**/.terraform.lock.hcl
+
+# ── Generated code (regenerate with build commands) ──────────────────────────
+backend/app/target/generated-sources/
+backend/api/target/generated-sources/
+frontend/src/app/api/generated/
+
+# ── Test reports ─────────────────────────────────────────────────────────────
+backend/**/target/site/
+*.xml.backup
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Docker volumes (local) ───────────────────────────────────────────────────
+.docker-volumes/

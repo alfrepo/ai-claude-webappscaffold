@@ -1,0 +1,73 @@
+# WHY THIS FILE EXISTS: Base application configuration shared across all profiles.
+# Profile-specific overrides live in application-{profile}.yml.
+# ALL values that differ between environments MUST use ${ENV_VAR:default} substitution.
+# Never hardcode URLs, credentials, or ports here — they come from environment variables.
+# See 12-Factor App rules in CLAUDE.md.
+
+spring:
+  application:
+    name: webapp
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+  # JPA / Hibernate
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        default_schema: public
+
+  # Flyway database migration
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+    out-of-order: false
+
+  # Jackson JSON configuration
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Server configuration
+server:
+  port: 8080
+  error:
+    include-message: never      # Never expose internal messages in error responses
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+# Spring Boot Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true    # Enables /actuator/health/liveness and /actuator/health/readiness
+  info:
+    git:
+      mode: full
+    build:
+      enabled: true
+
+# Application-specific configuration
+app:
+  security:
+    frontend-origin: ${FRONTEND_ORIGIN:http://localhost:4200}
+
+# SpringDoc / OpenAPI UI (available in non-prod profiles)
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha

@@ -1,0 +1,13 @@
+<!--
+  WHY THIS FILE EXISTS: Header template.
+  The <header> element has role="banner" (implicit for <header> at page level, explicit here for clarity).
+  aria-label comes from the i18n key — never use a hardcoded string.
+  To add navigation items: add <nav> with aria-label="Main navigation".
+-->
+<header
+  role="banner"
+  [attr.aria-label]="'HEADER.ARIA_LABEL' | translate"
+  class="surface-900 text-white px-4 py-3 flex align-items-center"
+>
+  <span class="text-xl font-bold">{{ 'HEADER.TITLE' | translate }}</span>
+</header>
