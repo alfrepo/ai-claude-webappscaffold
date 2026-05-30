@@ -51,6 +51,9 @@
     <checkstyle.version>3.3.1</checkstyle.version>
     <spotbugs.version>4.8.5.0</spotbugs.version>
     <owasp-dependency-check.version>9.2.0</owasp-dependency-check.version>
+    <allure.version>2.27.0</allure.version>
+    <allure-maven.version>2.13.0</allure-maven.version>
+    <aspectj.version>1.9.22</aspectj.version>
 
     <!-- JaCoCo coverage thresholds — raise these as coverage improves, never lower -->
     <jacoco.line.coverage.minimum>0.80</jacoco.line.coverage.minimum>
@@ -106,6 +109,15 @@
         <groupId>org.zalando</groupId>
         <artifactId>problem-spring-web-starter</artifactId>
         <version>${problem-spring.version}</version>
+      </dependency>
+
+      <!-- Allure BOM — managed versions for all Allure modules -->
+      <dependency>
+        <groupId>io.qameta.allure</groupId>
+        <artifactId>allure-bom</artifactId>
+        <version>${allure.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -221,6 +233,18 @@
           <groupId>org.openapitools</groupId>
           <artifactId>openapi-generator-maven-plugin</artifactId>
           <version>${openapi-generator.version}</version>
+        </plugin>
+
+        <!-- Allure Maven: generates HTML report from target/allure-results -->
+        <plugin>
+          <groupId>io.qameta.allure</groupId>
+          <artifactId>allure-maven</artifactId>
+          <version>${allure-maven.version}</version>
+          <configuration>
+            <reportVersion>${allure.version}</reportVersion>
+            <resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+            <reportDirectory>${project.build.directory}/allure-report</reportDirectory>
+          </configuration>
         </plugin>
       </plugins>
     </pluginManagement>

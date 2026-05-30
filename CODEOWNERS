@@ -1,0 +1,33 @@
+# WHY THIS FILE EXISTS: GitLab CODEOWNERS — defines who must approve changes to
+# critical files. GitLab enforces these approvals as merge request rules when
+# "Code Owners" approval is enabled in Project › Settings › Merge requests.
+# Syntax: <path-pattern> <@user-or-@group>
+# More specific rules below override less specific ones above.
+# See: https://docs.gitlab.com/ee/user/project/codeowners/
+
+# ── Catch-all: platform team approves everything ──────────────────────────────
+* @platform-team
+
+# ── Architecture and standards — must be reviewed by platform lead ────────────
+/CLAUDE.md                          @platform-lead @platform-team
+/INTRO.md                           @platform-lead @platform-team
+/docs/ARC42.md                      @platform-lead @platform-team
+/docs/adr/                          @platform-lead @platform-team
+/docs/ARCHITECTURE.md               @platform-lead
+
+# ── CI/CD pipeline — changes require platform team approval ──────────────────
+/.gitlab-ci.yml                     @platform-lead @platform-team
+/infra/helm/                        @platform-lead @platform-team
+/infra/terraform/                   @platform-lead @platform-team
+
+# ── Security-sensitive files — require security team sign-off ─────────────────
+/backend/app/src/main/java/**/config/SecurityConfig.java  @security-team @platform-lead
+/backend/owasp-suppressions.xml                           @security-team
+/backend/spotbugs-exclude.xml                             @security-team
+
+# ── OpenAPI contract — breaking changes require backend + frontend leads ──────
+/backend/api/src/main/resources/openapi.yaml  @backend-lead @frontend-lead
+
+# ── Accessibility — all a11y config requires accessibility review ─────────────
+/frontend/src/styles.scss           @a11y-lead @frontend-lead
+/frontend/.eslintrc.json            @a11y-lead @frontend-lead

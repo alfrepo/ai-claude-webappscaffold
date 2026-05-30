@@ -2,6 +2,7 @@
 // Uses jest-preset-angular to handle Angular-specific transforms.
 // Coverage thresholds are enforced here — CI fails if they are not met.
 // jest-axe is configured globally so every spec can run accessibility checks.
+// allure-jest writes results to allure-results/ for the CI 'allure:generate' job.
 // To add a global test setup: add the file path to setupFilesAfterFramework.
 
 import type { Config } from 'jest';
@@ -28,6 +29,30 @@ const config: Config = {
     ],
   },
   transformIgnorePatterns: ['node_modules/(?!.*\\.mjs$|@angular|primeng|primeicons|primeflex)'],
+  // Reporters: default for console output + Allure for the dashboard + JUnit for GitLab
+  reporters: [
+    'default',
+    [
+      'allure-jest',
+      {
+        // Results directory consumed by 'allure:generate' script and CI allure:generate job
+        resultsDir: 'allure-results',
+        testMode: false,
+      },
+    ],
+    [
+      'jest-junit',
+      {
+        outputDirectory: '.',
+        outputName: 'junit.xml',
+        ancestorSeparator: ' › ',
+        uniqueOutputName: false,
+        suiteNameTemplate: '{filepath}',
+        classNameTemplate: '{classname}',
+        titleTemplate: '{title}',
+      },
+    ],
+  ],
   coverageDirectory: 'coverage',
   collectCoverageFrom: [
     'src/app/**/*.ts',
@@ -36,7 +61,10 @@ const config: Config = {
     '!src/main.ts',
     '!src/**/*.d.ts',
   ],
-  coverageReporters: ['html', 'lcov', 'text-summary'],
+  // lcov  → GitLab coverage widget + genhtml
+  // cobertura → GitLab coverage report artifact
+  // text-summary → console output
+  coverageReporters: ['html', 'lcov', 'cobertura', 'text-summary'],
   // Enforced thresholds — matches CLAUDE.md TEST COVERAGE GATES section.
   // Raise these as coverage improves; never lower them.
   coverageThreshold: {

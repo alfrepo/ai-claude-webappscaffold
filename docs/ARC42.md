@@ -31,7 +31,7 @@
   Claude Code will detect it during PR review and update the section.
 -->
 
-> **Version:** 0.0.1 · **Status:** Current · **Last updated:** 2026-05-30
+> **Version:** 0.0.2 · **Status:** Current · **Last updated:** 2026-05-31
 > **Owned by:** Platform Team · **Review cycle:** Every sprint or on architectural change
 
 ---
@@ -110,14 +110,14 @@ Resolving a conflict between two goals follows this priority ranking.
 | TC-04 | PostgreSQL 16 as primary database | ACID compliance; AWS RDS managed offering |
 | TC-05 | All infrastructure as Terraform code | No click-ops; reproducibility and audit trail required |
 | TC-06 | Docker as container runtime | Standard OCI container; compatible with ECS Fargate and EKS |
-| TC-07 | GitHub as VCS and CI platform | Organisation standard; OIDC integration with AWS |
+| TC-07 | GitLab as VCS, CI/CD, and container registry platform | Organisation standard; integrated registry, Pages, CODEOWNERS, and environment tracking (ADR-0005) |
 | TC-08 | OpenAPI 3.1 contract-first | Required to support parallel frontend/backend development |
 
 ### 2.2 Organisational Constraints
 
 | ID | Constraint | Rationale |
 |----|-----------|-----------|
-| OC-01 | All changes via PR + CI gate | No direct commits to `main`; mandatory peer review |
+| OC-01 | All changes via Merge Request + mandatory CI pipeline | No direct commits to `main`; pipeline must pass + Code Owner approval required; enforced by GitLab protected branch rules |
 | OC-02 | Architectural decisions recorded as ADRs | Organisational memory; onboarding requirement |
 | OC-03 | WCAG 2.1 AA for all user-facing features | Legal obligation in target markets |
 | OC-04 | OWASP dependency scan on every build | Security policy; CVEs ≥ 7.0 block release |
@@ -209,7 +209,7 @@ Communication channels and protocols between the system and its neighbours.
 | **Three-Layer Test Pyramid** | All test suites | Fast unit tests catch regressions early; Testcontainers integration tests verify real DB behaviour; Cucumber E2E tests verify business scenarios |
 | **Accessibility-by-default** | All Angular components | `jest-axe` in every unit test; `@axe-core/playwright` in every E2E test; accessibility is never retrofitted |
 | **12-Factor App** | Backend configuration | Config via env vars; stateless; logs to stdout; disposable processes |
-| **GitOps** | Helm chart + CI | Cluster state is the rendered Helm chart; CI is the only actor that applies it; no manual `kubectl apply` in production |
+| **GitOps** | Helm chart + GitLab CI | Cluster state is the rendered Helm chart; GitLab CI (`deploy` stage) is the only actor that applies it; no manual `kubectl apply` in production |
 | **Runtime environment injection** | `window.__env` / Helm ConfigMap | One Docker image runs in all environments; API URL injected at container start, not build time |
 
 ### 4.2 Key Technology Decisions
@@ -223,6 +223,8 @@ Communication channels and protocols between the system and its neighbours.
 | Secret management | AWS Secrets Manager | SSM Parameter Store, Vault | Auto-rotation; ExternalSecret Operator integration; fine-grained IAM |
 | Container orchestration | ECS Fargate + Helm/EKS | EKS-only, Lambda | Fargate for simplicity; Helm chart for K8s parity |
 | IaC | Terraform | AWS CDK, Pulumi | Multi-cloud portable; large module ecosystem |
+| CI/CD platform | GitLab CI/CD | GitHub Actions | Integrated registry, Pages, CODEOWNERS, Environments (ADR-0005) |
+| Test dashboard | Allure Framework | ReportPortal, JUnit XML | Unified multi-layer dashboard; no separate server needed; `when: always` ensures report on every pipeline run (ADR-0006) |
 
 ---
 
@@ -415,26 +417,33 @@ The sequence a developer follows when adding a feature (enforced by CLAUDE.md).
 ```mermaid
 sequenceDiagram
     participant Dev as Developer
-    participant GH as Git / GitHub
-    participant CI as CI (GitHub Actions)
+    participant GL as Git / GitLab
+    participant CI as GitLab CI (.gitlab-ci.yml)
+    participant Allure as Allure Dashboard
     participant K8s as Kubernetes (dev cluster)
 
     Dev->>Dev: Write .feature file (Gherkin)
     Dev->>Dev: Write failing unit + integration tests
     Dev->>Dev: Implement minimum code to pass tests
     Dev->>Dev: Update openapi.yaml + regenerate
-    Dev->>GH: git push → open PR
-    GH->>CI: Trigger CI pipeline
-    CI->>CI: backend-lint, backend-test (JaCoCo ≥80%)
-    CI->>CI: frontend-lint, frontend-test (Jest ≥80%)
-    CI->>CI: E2E (Playwright + Cucumber + axe)
+    Dev->>Dev: ./scripts/quality-gate.sh (local gate)
+    Dev->>GL: git push → open Merge Request
+    GL->>CI: Trigger pipeline (validate stage)
+    CI->>CI: Checkstyle, SpotBugs, ESLint, Prettier
+    CI->>CI: ARC42 staleness check, Helm lint
+    CI->>CI: backend tests (JaCoCo ≥80% + Allure results)
+    CI->>CI: frontend tests (Jest ≥80% + Allure results)
+    CI->>CI: E2E — Playwright + Cucumber + axe (Allure results)
     CI->>CI: OWASP dep-check (CVSS < 7.0)
-    CI->>CI: helm lint + helm template (Deployment 2)
-    CI-->>GH: ci-pass ✓ — PR mergeable
-    GH->>CI: Merge to main → deploy.yml
-    CI->>CI: Build + push Docker images to ECR
-    CI->>K8s: helm upgrade --atomic
+    CI->>Allure: allure:generate (when: always — mandatory)
+    Allure-->>CI: Report artifact + executor.json with pipeline URL
+    CI-->>GL: All stages green — MR mergeable
+    Note over GL: "Pipelines must succeed" + CODEOWNERS approval
+    GL->>CI: Merge to main → build + deploy stages
+    CI->>CI: Docker build → push to GitLab Container Registry
+    CI->>K8s: helm upgrade --atomic (dev auto, staging/prod manual)
     K8s-->>CI: Rollout complete
+    CI->>GL: pages job → Allure + API docs at $CI_PAGES_URL
 ```
 
 ---
@@ -514,16 +523,19 @@ graph TB
 | Attribute | local | dev | staging | prod |
 |-----------|-------|-----|---------|------|
 | Deployment artifact | Docker Compose | Helm | Helm | Helm |
+| Deploy trigger | `docker compose up` | GitLab CI `deploy:dev` (auto on main) | GitLab CI `deploy:staging` (manual) | GitLab CI `deploy:prod` (tag + manual) |
 | Spring profile | `local` | `dev` | `staging` | `prod` |
 | Database | Docker postgres:16 | RDS `db.t3.micro` | RDS `db.t3.small` | RDS `db.t3.medium`, Multi-AZ |
 | Backend replicas | 1 | 1 | 1 | ≥ 2 (HPA) |
 | Frontend replicas | 1 | 1 | 1 | ≥ 2 (HPA) |
 | AWS services | LocalStack | Real AWS | Real AWS | Real AWS |
-| Secrets source | `docker-compose.yml` env | Secrets Manager | Secrets Manager | Secrets Manager |
+| Container registry | Local Docker | GitLab Container Registry | GitLab Container Registry | GitLab Container Registry |
+| Secrets source | `docker-compose.yml` env | Secrets Manager via ExternalSecret | Secrets Manager via ExternalSecret | Secrets Manager via ExternalSecret |
 | Swagger UI | ✓ | ✓ | ✗ | ✗ |
 | PDB enabled | ✗ | ✗ | ✗ | ✓ |
 | Log level | DEBUG | DEBUG | INFO | WARN |
 | X-Ray tracing | LocalStack | Real X-Ray | Real X-Ray | Real X-Ray |
+| Allure dashboard | Local (`npm run allure:open`) | GitLab Pages `$CI_PAGES_URL/allure/` | GitLab Pages | GitLab Pages |
 
 ### 7.4 Network Topology (AWS)
 
@@ -577,14 +589,16 @@ Concepts, patterns, and solutions that apply uniformly across all building block
 
 ### 8.2 Observability
 
-All three observability signals are emitted from the first line of code.
+All three observability signals are emitted from the first line of code, plus a mandatory
+test quality signal via Allure.
 
 ```
 Signal      │ Technology                        │ Destination
-────────────┼───────────────────────────────────┼──────────────────────
+────────────┼───────────────────────────────────┼──────────────────────────────────────
 Logs        │ Logback + logstash-logback-encoder │ stdout → CloudWatch Logs
 Traces      │ Micrometer Tracing + OTLP bridge   │ AWS X-Ray (OTLP endpoint)
 Metrics     │ Micrometer + Prometheus            │ /actuator/metrics → CloudWatch
+Test quality│ Allure Framework (all four layers) │ GitLab Pages $CI_PAGES_URL/allure/
 ```
 
 **Log format (JSON, every line):**
@@ -687,6 +701,8 @@ This section is an index. Read the linked ADR for full context, alternatives con
 | [0002](adr/0002-contract-first-api-design.md) | Contract-First API Design | Accepted | 2026-05-30 | OpenAPI 3.1 as single source of truth; generated stubs for both backend and frontend |
 | [0003](adr/0003-test-strategy.md) | Test Strategy | Accepted | 2026-05-30 | Three-layer pyramid: JUnit/Jest unit → Testcontainers integration → Cucumber/Playwright E2E |
 | [0004](adr/0004-accessibility-strategy.md) | Accessibility Strategy | Accepted | 2026-05-30 | WCAG 2.1 AA enforced by jest-axe at unit level and @axe-core/playwright at E2E level |
+| [0005](adr/0005-gitlab-migration.md) | GitLab as VCS and CI Platform | Accepted | 2026-05-31 | Migrate from GitHub Actions to GitLab CI/CD; integrated registry + Pages + mandatory pipeline |
+| [0006](adr/0006-allure-reporting.md) | Allure as Mandatory Test Dashboard | Accepted | 2026-05-31 | Allure aggregates all four test layers; `when: always` job produces report on every pipeline |
 
 > **How to add a new ADR:** copy the MADR template from any existing ADR, increment the number,
 > write the decision, add a row to this table, and update the relevant ARC42 section(s) above.
@@ -768,6 +784,7 @@ Quality
 | Term | Definition |
 |------|-----------|
 | **ADR** | Architecture Decision Record — a document capturing a significant architectural decision, its context, and its consequences. Stored in `/docs/adr/`. |
+| **Allure** | Open-source test reporting framework by Qameta. Aggregates JUnit 5, Jest, Playwright, and Cucumber results into a unified HTML dashboard with trend charts and attachment support. |
 | **ARC42** | A template for documenting software and system architecture, structured into 12 sections. See https://arc42.org. |
 | **Actuator** | Spring Boot Actuator — provides production-ready endpoints: `/actuator/health`, `/actuator/metrics`, `/actuator/info`. |
 | **axe-core** | Open-source accessibility testing engine by Deque. Used via `jest-axe` (unit tests) and `@axe-core/playwright` (E2E tests). |
@@ -794,3 +811,6 @@ Quality
 | **WCAG** | Web Content Accessibility Guidelines — the international standard for web accessibility. This project targets WCAG 2.1 Level AA. |
 | **window.__env** | JavaScript pattern for runtime environment injection. `entrypoint.sh` (Docker) and Helm ConfigMap write environment variables into this object before Angular bootstraps. |
 | **Zalando Problem Spring** | Library that integrates RFC 7807 Problem Details with Spring MVC. Replaced in this scaffold by Spring 6's native `ProblemDetail` support. |
+| **GitLab CI/CD** | GitLab's built-in continuous integration and delivery system. Configured via `.gitlab-ci.yml`. Replaces GitHub Actions in this project (ADR-0005). |
+| **GitLab Pages** | GitLab feature that serves static HTML from a `public/` artifact of the `pages` job. Used to host the Allure dashboard, OpenAPI docs, and coverage reports. |
+| **CODEOWNERS** | GitLab file that maps file paths to required approvers. Enforced via GitLab merge request approval rules. Located at `/CODEOWNERS`. |

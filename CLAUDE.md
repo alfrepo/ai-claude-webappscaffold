@@ -18,7 +18,7 @@
 | API | REST, OpenAPI 3.1 (contract-first) |
 | Database | PostgreSQL 16 (RDS in prod, Testcontainers in tests) |
 | Cloud | AWS (ECS Fargate + ALB, CloudFront + S3, RDS, Secrets Manager) |
-| CI/CD | GitHub Actions |
+| CI/CD | GitLab CI/CD (`.gitlab-ci.yml`) |
 | IaC | Terraform |
 
 **Port Conventions:**
@@ -48,6 +48,92 @@ in **both** deployment targets.
 - `docker compose up --build -d` must start cleanly from a cold state — no manual steps.
 - No plaintext secrets in any `values*.yaml` file. Use `ExternalSecret` for all credentials.
 - See `INTRO.md §3` for the full deployment artifact specification.
+
+---
+
+## MANDATORY CI/CD PIPELINE
+
+The GitLab CI/CD pipeline defined in `.gitlab-ci.yml` is **mandatory**. No merge request
+may be merged without a green pipeline. This is enforced at the GitLab project level via:
+
+- **Project › Settings › Merge requests › "Pipelines must succeed"** — must be enabled
+- **Protected branches** — `main` requires passing pipeline + Code Owner approval
+- **`CODEOWNERS`** — defines who must approve changes to critical files
+
+### Pipeline stages and their mandatory status
+
+| Stage | Jobs | Mandatory? |
+|-------|------|-----------|
+| `validate` | Checkstyle, SpotBugs, ESLint, Prettier, Helm lint, ARC42 check | Yes — all |
+| `test` | Backend tests + JaCoCo, Frontend tests + Jest coverage | Yes — all |
+| `e2e` | Playwright + Cucumber BDD | Yes |
+| `security` | OWASP dependency check (CVSS ≥ 7.0 fails) | Yes |
+| `report` | **Allure dashboard generation** | Yes — `when: always` |
+| `build` | Docker image push to GitLab Registry | Yes (main branch only) |
+| `deploy` | Helm upgrade to dev/staging/prod | Yes for dev (auto), manual for staging/prod |
+| `pages` | GitLab Pages: Allure + API docs + coverage | Yes (main branch only) |
+
+**The `report` stage is the only stage that uses `when: always`** — the Allure dashboard
+must be generated on every pipeline run, including failures, so developers can diagnose
+problems from the report. Adding `allow_failure: true` to any other job requires an ADR.
+
+### GitLab CI/CD Variables required (Project › Settings › CI/CD › Variables)
+
+| Variable | Description | Protected | Masked |
+|----------|-------------|-----------|--------|
+| `NVD_API_KEY` | NVD API key for OWASP checks | Yes | Yes |
+| `KUBECONFIG_DEV_B64` | Base64-encoded kubeconfig for dev cluster | Yes | Yes |
+| `KUBECONFIG_STAGING_B64` | Base64-encoded kubeconfig for staging | Yes | Yes |
+| `KUBECONFIG_PROD_B64` | Base64-encoded kubeconfig for prod | Yes | Yes |
+| `CI_REGISTRY_USER` | GitLab Container Registry user (auto-set) | No | No |
+| `CI_REGISTRY_PASSWORD` | GitLab Container Registry token (auto-set) | No | Yes |
+
+---
+
+## MANDATORY ALLURE DASHBOARD
+
+Every pipeline run **must** produce an Allure test dashboard. This is non-negotiable.
+
+### What feeds Allure
+
+| Layer | Tool | Results directory |
+|-------|------|------------------|
+| Backend unit + integration | `allure-junit5` (auto via Surefire agent) | `backend/app/target/allure-results/` |
+| Frontend unit | `allure-jest` reporter in `jest.config.ts` | `frontend/allure-results/` |
+| E2E Playwright | `allure-playwright` reporter in `playwright.config.ts` | `frontend/allure-results/` |
+| E2E Cucumber | `allure-cucumberjs` formatter in `cucumber.js` | `frontend/allure-results/` |
+
+All results are merged in the CI `allure:generate` job and the unified report is:
+1. Available as a **downloadable artifact** on every pipeline (for failed pipelines)
+2. Published to **GitLab Pages** at `$CI_PAGES_URL/allure/` (main branch only)
+
+### Rules
+
+- **Never disable any Allure reporter.** All four integration points must remain wired.
+- **Write meaningful Allure annotations** on backend tests:
+  ```java
+  @Feature("User Registration")
+  @Story("Happy path registration")
+  @Severity(SeverityLevel.CRITICAL)
+  @Test
+  void shouldRegisterUserSuccessfully() { … }
+  ```
+- **Write meaningful Allure labels** on E2E steps:
+  ```typescript
+  allure.label('feature', 'User Registration');
+  allure.label('story', 'Happy path');
+  ```
+- **Use `@Step` annotations** on backend helper methods to produce readable step logs.
+- The Allure dashboard is the **primary diagnostic tool** for test failures. Before asking
+  "why did CI fail?", open the Allure report.
+
+### Local Allure workflow
+
+```bash
+# After running tests locally:
+cd backend && ./mvnw allure:report  # → backend/app/target/allure-report/
+cd frontend && npm run allure:generate && npm run allure:open
+```
 
 ---
 
@@ -233,6 +319,8 @@ Feature: User Registration
 - [0002 Contract-First API Design](docs/adr/0002-contract-first-api-design.md)
 - [0003 Test Strategy](docs/adr/0003-test-strategy.md)
 - [0004 Accessibility Strategy](docs/adr/0004-accessibility-strategy.md)
+- [0005 GitLab as VCS and CI Platform](docs/adr/0005-gitlab-migration.md)
+- [0006 Allure as Mandatory Test Reporting](docs/adr/0006-allure-reporting.md)
 
 ---
 
@@ -243,7 +331,7 @@ Feature: User Registration
 - `/docs/ARC42.md`: ARC42 solution architecture — see maintenance rules below
 - Every public Java class/method MUST have Javadoc (enforced by Checkstyle)
 - Every Angular public component MUST have JSDoc + `@Input`/`@Output` documented
-- OpenAPI spec is auto-published to `/docs/api/` via Redoc on CI (GitHub Pages)
+- OpenAPI spec is auto-published to GitLab Pages at `$CI_PAGES_URL/api/` via the `pages` CI job
 - Never delete an ADR — mark it `deprecated` or `superseded`
 
 ---

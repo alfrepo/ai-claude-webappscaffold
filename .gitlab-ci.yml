@@ -1,0 +1,627 @@
+# WHY THIS FILE EXISTS: GitLab CI/CD pipeline — the MANDATORY quality gate for this project.
+# Every push to any branch runs this pipeline. Merge requests require the pipeline to pass
+# before merge is permitted (enforce via Project › Settings › Merge requests ›
+# "Pipelines must succeed" + protected branch rules).
+#
+# PIPELINE STAGES (DAG — jobs within a stage run in parallel where 'needs:' allows):
+#   validate  → lint, static analysis, ARC42 staleness, Helm lint
+#   test      → backend unit+integration (JaCoCo+Allure), frontend unit (Jest+Allure)
+#   e2e       → Playwright + Cucumber BDD (Allure)
+#   security  → OWASP dependency check
+#   report    → Allure dashboard aggregation (MANDATORY — always runs, even on test failure)
+#   build     → Docker images → GitLab Container Registry
+#   deploy    → Helm upgrade per environment
+#   pages     → GitLab Pages: Allure dashboard + OpenAPI docs + coverage reports
+#
+# MANDATORY PIPELINE: Adding 'allow_failure: true' to any job requires an ADR.
+# The 'allure:generate' job is 'when: always' so the dashboard is produced on every run,
+# including failed runs, so developers can diagnose failures from the report.
+#
+# SECRETS: All credentials are GitLab CI/CD Variables (Project › Settings › CI/CD › Variables).
+# Never hardcode secrets here. See §7 of docs/ARC42.md for the full variable list.
+
+# ── Workflow rules ────────────────────────────────────────────────────────────
+# Run on: every push, every MR, and manual triggers. Skip on commits whose message
+# contains [skip ci] (for documentation-only changes that still need docs/ updated).
+workflow:
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /\[skip ci\]/'
+      when: never
+    - when: always
+
+# ── Global variables ──────────────────────────────────────────────────────────
+variables:
+  # Maven
+  MAVEN_OPTS: >-
+    -Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository
+    -Dmaven.artifact.threads=4
+  MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  # Docker
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  # Allure
+  ALLURE_RESULTS_DIR: allure-results
+  # Image registry — GitLab Container Registry
+  BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend
+  FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
+  # Application
+  JAVA_VERSION: "21"
+  NODE_VERSION: "20"
+
+# ── Stage definitions ─────────────────────────────────────────────────────────
+stages:
+  - validate    # Lint, format, static analysis, Helm, ARC42
+  - test        # Unit + integration tests with coverage
+  - e2e         # Playwright + Cucumber BDD
+  - security    # OWASP dependency scan
+  - report      # Allure dashboard — MANDATORY, always runs
+  - build       # Docker images
+  - deploy      # Helm upgrade to cluster
+  - pages       # GitLab Pages (Allure + API docs + coverage)
+
+# ── Reusable cache templates ──────────────────────────────────────────────────
+.maven-cache:
+  cache:
+    key:
+      files: [backend/pom.xml, backend/app/pom.xml, backend/api/pom.xml, backend/domain/pom.xml]
+      prefix: "maven-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .m2/repository/
+    policy: pull-push
+
+.npm-cache:
+  cache:
+    key:
+      files: [frontend/package-lock.json]
+      prefix: "npm-$CI_COMMIT_REF_SLUG"
+    paths:
+      - frontend/node_modules/
+    policy: pull-push
+
+# ── Reusable Docker-in-Docker template (for Testcontainers) ──────────────────
+.dind-service:
+  services:
+    - name: docker:24-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+    TESTCONTAINERS_HOST_OVERRIDE: "docker"
+
+# ── Base image templates ──────────────────────────────────────────────────────
+.java-base:
+  image: eclipse-temurin:21-jdk
+  extends: [.maven-cache]
+  before_script:
+    - cd backend
+
+.node-base:
+  image: node:20-alpine
+  extends: [.npm-cache]
+  before_script:
+    - cd frontend
+    - npm ci --prefer-offline
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: validate
+# ═════════════════════════════════════════════════════════════════════════════
+
+backend:checkstyle:
+  extends: .java-base
+  stage: validate
+  needs: []
+  script:
+    - ./mvnw $MAVEN_CLI_OPTS checkstyle:check -pl app,domain
+  allow_failure: false
+  artifacts:
+    when: always
+    reports:
+      junit: backend/**/target/checkstyle-result.xml
+    expire_in: 1 week
+
+backend:spotbugs:
+  extends: .java-base
+  stage: validate
+  needs: []
+  script:
+    - ./mvnw $MAVEN_CLI_OPTS spotbugs:check -pl app
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - backend/**/target/spotbugsXml.xml
+    expire_in: 1 week
+
+frontend:lint:
+  extends: .node-base
+  stage: validate
+  needs: []
+  script:
+    - npm run lint
+    - npm run format:check
+  allow_failure: false
+
+helm:validate:
+  image: alpine/helm:3.15.0
+  stage: validate
+  needs: []
+  script:
+    - helm lint infra/helm/webapp/ --values infra/helm/webapp/values.yaml
+    - helm lint infra/helm/webapp/ --values infra/helm/webapp/values.yaml --values infra/helm/webapp/values-dev.yaml
+    - helm lint infra/helm/webapp/ --values infra/helm/webapp/values.yaml --values infra/helm/webapp/values-prod.yaml
+    - >
+      helm template webapp infra/helm/webapp/
+      --values infra/helm/webapp/values.yaml
+      --values infra/helm/webapp/values-dev.yaml
+      --set backend.image.tag=ci-test
+      --set frontend.image.tag=ci-test
+      > /dev/null
+    - echo "✓ Helm chart lint and template render passed."
+  allow_failure: false
+
+arc42:staleness:
+  image: alpine:latest
+  stage: validate
+  needs: []
+  script:
+    - |
+      if grep -n "ARCHITECTURE-STALE" docs/ARC42.md; then
+        echo "⚠ docs/ARC42.md has ARCHITECTURE-STALE markers — update before merge."
+        exit 1
+      fi
+    - |
+      if ! grep -qE '\*\*Last updated:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}' docs/ARC42.md; then
+        echo "⚠ docs/ARC42.md is missing a valid '**Last updated:** YYYY-MM-DD' line."
+        exit 1
+      fi
+    - echo "✓ ARC42 has no stale markers."
+  allow_failure: false
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: test
+# ═════════════════════════════════════════════════════════════════════════════
+
+backend:test:
+  extends: [.java-base, .dind-service]
+  stage: test
+  needs:
+    - backend:checkstyle
+    - backend:spotbugs
+  script:
+    # verify runs: compile → test (JaCoCo agent) → JaCoCo check → Allure results
+    - ./mvnw $MAVEN_CLI_OPTS verify
+    # Collect Allure results from all modules into a single directory
+    - mkdir -p ../$ALLURE_RESULTS_DIR/backend
+    - find . -path "*/target/allure-results/*" -exec cp {} ../$ALLURE_RESULTS_DIR/backend/ \; || true
+  allow_failure: false
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  artifacts:
+    when: always
+    reports:
+      junit: backend/**/target/surefire-reports/TEST-*.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: backend/app/target/site/jacoco/jacoco.xml
+    paths:
+      - allure-results/backend/
+      - backend/app/target/site/jacoco/
+    expire_in: 1 week
+
+frontend:test:
+  extends: .node-base
+  stage: test
+  needs:
+    - frontend:lint
+  script:
+    - npm run test:ci
+    # Allure results are written to allure-results/ by allure-jest
+    - mkdir -p ../$ALLURE_RESULTS_DIR/frontend
+    - cp -r allure-results/* ../$ALLURE_RESULTS_DIR/frontend/ 2>/dev/null || true
+  allow_failure: false
+  coverage: '/Statements\s*:\s*([0-9.]+)%/'
+  artifacts:
+    when: always
+    reports:
+      junit: frontend/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: frontend/coverage/cobertura-coverage.xml
+    paths:
+      - allure-results/frontend/
+      - frontend/coverage/
+    expire_in: 1 week
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: e2e
+# ═════════════════════════════════════════════════════════════════════════════
+
+e2e:playwright:
+  image: mcr.microsoft.com/playwright:v1.44.0-jammy
+  stage: e2e
+  needs:
+    - backend:test
+    - frontend:test
+  variables:
+    PLAYWRIGHT_BASE_URL: "http://localhost:4200"
+  services:
+    - name: docker:24-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    # Install docker compose
+    - apt-get update -qq && apt-get install -y -qq docker-compose-plugin
+    # Start application stack
+    - docker compose up --build -d
+    # Wait for backend health
+    - timeout 120 sh -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 3; done'
+    # Install frontend deps
+    - cd frontend && npm ci --prefer-offline
+  script:
+    - cd frontend
+    - npx playwright install chromium --with-deps
+    - npm run e2e
+    # Collect Allure results
+    - mkdir -p ../$ALLURE_RESULTS_DIR/e2e
+    - cp -r allure-results/* ../$ALLURE_RESULTS_DIR/e2e/ 2>/dev/null || true
+  after_script:
+    - docker compose down || true
+  allow_failure: false
+  artifacts:
+    when: always
+    reports:
+      junit: frontend/playwright-report/results.xml
+    paths:
+      - allure-results/e2e/
+      - frontend/playwright-report/
+    expire_in: 1 week
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: security
+# ═════════════════════════════════════════════════════════════════════════════
+
+security:owasp:
+  extends: .java-base
+  stage: security
+  needs:
+    - backend:test
+  script:
+    - ./mvnw $MAVEN_CLI_OPTS dependency-check:check -pl app
+  allow_failure: false
+  variables:
+    NVD_API_KEY: $NVD_API_KEY
+  artifacts:
+    when: always
+    paths:
+      - backend/app/target/dependency-check-report.html
+    expire_in: 4 weeks
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: report  — MANDATORY, always runs, even on prior stage failure
+# Aggregates all Allure results and generates the unified dashboard.
+# The dashboard is available as a downloadable artifact immediately,
+# and published to GitLab Pages by the 'pages' job.
+# ═════════════════════════════════════════════════════════════════════════════
+
+allure:generate:
+  image: frankescobar/allure-docker-service:latest
+  stage: report
+  # 'when: always' is intentional — the Allure dashboard must be produced on
+  # every pipeline run, including failed ones, so developers can diagnose failures.
+  # This is the ONLY job in this pipeline with 'when: always'.
+  when: always
+  needs:
+    - job: backend:test
+      artifacts: true
+    - job: frontend:test
+      artifacts: true
+    - job: e2e:playwright
+      artifacts: true
+  script:
+    # Merge all results into a single directory
+    - mkdir -p /app/allure-results
+    - cp -r allure-results/backend/* /app/allure-results/ 2>/dev/null || echo "No backend results"
+    - cp -r allure-results/frontend/* /app/allure-results/ 2>/dev/null || echo "No frontend results"
+    - cp -r allure-results/e2e/* /app/allure-results/ 2>/dev/null || echo "No e2e results"
+    # Fail if there are absolutely no results (pipeline generated nothing)
+    - |
+      RESULT_COUNT=$(ls /app/allure-results/*.json 2>/dev/null | wc -l || echo 0)
+      if [ "$RESULT_COUNT" -eq "0" ]; then
+        echo "⚠ No Allure results found in any module. Pipeline configuration error."
+        exit 1
+      fi
+      echo "✓ Found $RESULT_COUNT Allure result files."
+    # Write environment properties into the report
+    - |
+      cat > /app/allure-results/environment.properties << EOF
+      Pipeline=${CI_PIPELINE_ID}
+      Branch=${CI_COMMIT_REF_NAME}
+      Commit=${CI_COMMIT_SHORT_SHA}
+      Author=${CI_COMMIT_AUTHOR}
+      Environment=${CI_ENVIRONMENT_NAME:-pipeline}
+      Backend.Profile=test
+      EOF
+    # Write executor info
+    - |
+      cat > /app/allure-results/executor.json << EOF
+      {
+        "name": "GitLab CI",
+        "type": "gitlab",
+        "url": "${CI_PROJECT_URL}",
+        "buildOrder": ${CI_PIPELINE_IID},
+        "buildName": "Pipeline #${CI_PIPELINE_IID}",
+        "buildUrl": "${CI_PIPELINE_URL}",
+        "reportUrl": "${CI_PAGES_URL}/allure/",
+        "reportName": "Allure Report"
+      }
+      EOF
+    # Generate the HTML report
+    - allure generate /app/allure-results --clean -o allure-report
+    - echo "✓ Allure report generated: $(ls allure-report/ | wc -l) files."
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - allure-report/
+    expose_as: "Allure Test Report"
+    expire_in: 4 weeks
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: build  — only on default branch and tags
+# ═════════════════════════════════════════════════════════════════════════════
+
+.build-rules: &build-rules
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+    - when: never
+
+backend:build:
+  image: docker:24
+  stage: build
+  <<: *build-rules
+  needs:
+    - backend:test
+    - security:owasp
+    - allure:generate
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      docker build \
+        --cache-from $BACKEND_IMAGE:latest \
+        --tag $BACKEND_IMAGE:$CI_COMMIT_SHORT_SHA \
+        --tag $BACKEND_IMAGE:latest \
+        backend/
+    - docker push $BACKEND_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $BACKEND_IMAGE:latest
+    - echo "BACKEND_IMAGE_TAG=$CI_COMMIT_SHORT_SHA" >> build.env
+  allow_failure: false
+  artifacts:
+    reports:
+      dotenv: build.env
+    expire_in: 1 day
+
+frontend:build:
+  image: docker:24
+  stage: build
+  <<: *build-rules
+  needs:
+    - frontend:test
+    - e2e:playwright
+    - allure:generate
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      docker build \
+        --cache-from $FRONTEND_IMAGE:latest \
+        --tag $FRONTEND_IMAGE:$CI_COMMIT_SHORT_SHA \
+        --tag $FRONTEND_IMAGE:latest \
+        frontend/
+    - docker push $FRONTEND_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $FRONTEND_IMAGE:latest
+  allow_failure: false
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: deploy
+# ═════════════════════════════════════════════════════════════════════════════
+
+.helm-deploy:
+  image: alpine/helm:3.15.0
+  before_script:
+    - apk add --no-cache curl
+    # Install kubectl
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+    # Configure kubeconfig from CI variable (base64-encoded kubeconfig)
+    - echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+    - export KUBECONFIG=/tmp/kubeconfig
+  after_script:
+    - rm -f /tmp/kubeconfig
+
+deploy:dev:
+  extends: .helm-deploy
+  stage: deploy
+  needs:
+    - backend:build
+    - frontend:build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  environment:
+    name: dev
+    url: https://webapp.dev.example.com
+    on_stop: undeploy:dev
+  variables:
+    KUBECONFIG_B64: $KUBECONFIG_DEV_B64
+    HELM_NAMESPACE: webapp-dev
+  script:
+    - |
+      helm upgrade --install webapp infra/helm/webapp/ \
+        --namespace $HELM_NAMESPACE \
+        --create-namespace \
+        --values infra/helm/webapp/values.yaml \
+        --values infra/helm/webapp/values-dev.yaml \
+        --set backend.image.repository=$BACKEND_IMAGE \
+        --set backend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --set frontend.image.repository=$FRONTEND_IMAGE \
+        --set frontend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --atomic \
+        --timeout 5m \
+        --wait
+    - echo "✓ Deployed to dev — $CI_COMMIT_SHORT_SHA"
+  allow_failure: false
+
+undeploy:dev:
+  extends: .helm-deploy
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  environment:
+    name: dev
+    action: stop
+  variables:
+    KUBECONFIG_B64: $KUBECONFIG_DEV_B64
+    HELM_NAMESPACE: webapp-dev
+  script:
+    - helm uninstall webapp --namespace $HELM_NAMESPACE || true
+
+deploy:staging:
+  extends: .helm-deploy
+  stage: deploy
+  needs:
+    - deploy:dev
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  environment:
+    name: staging
+    url: https://webapp.staging.example.com
+  variables:
+    KUBECONFIG_B64: $KUBECONFIG_STAGING_B64
+    HELM_NAMESPACE: webapp-staging
+  script:
+    - |
+      helm upgrade --install webapp infra/helm/webapp/ \
+        --namespace $HELM_NAMESPACE \
+        --create-namespace \
+        --values infra/helm/webapp/values.yaml \
+        --values infra/helm/webapp/values-staging.yaml \
+        --set backend.image.repository=$BACKEND_IMAGE \
+        --set backend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --set frontend.image.repository=$FRONTEND_IMAGE \
+        --set frontend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --atomic \
+        --timeout 5m \
+        --wait
+    - echo "✓ Deployed to staging — $CI_COMMIT_SHORT_SHA"
+  allow_failure: false
+
+deploy:prod:
+  extends: .helm-deploy
+  stage: deploy
+  needs:
+    - deploy:staging
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+      when: manual
+  environment:
+    name: prod
+    url: https://webapp.example.com
+  variables:
+    KUBECONFIG_B64: $KUBECONFIG_PROD_B64
+    HELM_NAMESPACE: webapp-prod
+  script:
+    - |
+      helm upgrade --install webapp infra/helm/webapp/ \
+        --namespace $HELM_NAMESPACE \
+        --create-namespace \
+        --values infra/helm/webapp/values.yaml \
+        --values infra/helm/webapp/values-prod.yaml \
+        --set backend.image.repository=$BACKEND_IMAGE \
+        --set backend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --set frontend.image.repository=$FRONTEND_IMAGE \
+        --set frontend.image.tag=$CI_COMMIT_SHORT_SHA \
+        --atomic \
+        --timeout 10m \
+        --wait
+    - echo "✓ Deployed to production — $CI_COMMIT_TAG ($CI_COMMIT_SHORT_SHA)"
+  allow_failure: false
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE: pages  — GitLab Pages
+# Publishes: Allure dashboard, OpenAPI docs, coverage reports.
+# Available at: https://<namespace>.gitlab.io/<project>/
+# Runs on default branch only. Requires successful allure:generate.
+# ═════════════════════════════════════════════════════════════════════════════
+
+pages:
+  image: node:20-alpine
+  stage: pages
+  when: always
+  needs:
+    - job: allure:generate
+      artifacts: true
+    - job: backend:test
+      artifacts: true
+    - job: frontend:test
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: always
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - mkdir -p public/allure public/api public/coverage/backend public/coverage/frontend
+    # Allure dashboard
+    - cp -r allure-report/* public/allure/ 2>/dev/null || echo "No Allure report artifact"
+    # OpenAPI docs via Redoc
+    - >
+      npx --yes @redocly/cli build-docs
+      backend/api/src/main/resources/openapi.yaml
+      --output public/api/index.html
+    # JaCoCo HTML report
+    - cp -r backend/app/target/site/jacoco/* public/coverage/backend/ 2>/dev/null || true
+    # Jest LCOV → HTML
+    - >
+      npx --yes genhtml
+      frontend/coverage/lcov.info
+      --output-directory public/coverage/frontend
+      2>/dev/null || true
+    # Root index with links
+    - |
+      cat > public/index.html << 'EOF'
+      <!doctype html>
+      <html lang="en">
+      <head><meta charset="utf-8"><title>WebApp CI Dashboard</title>
+      <style>
+        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; }
+        a { display: block; margin: 1rem 0; font-size: 1.2rem; }
+      </style>
+      </head>
+      <body>
+        <h1>WebApp CI Dashboard</h1>
+        <a href="allure/">📊 Allure Test Report</a>
+        <a href="api/">📄 OpenAPI Documentation</a>
+        <a href="coverage/backend/">☕ Backend Coverage (JaCoCo)</a>
+        <a href="coverage/frontend/">🅰 Frontend Coverage (Jest)</a>
+      </body>
+      </html>
+      EOF
+    - echo "✓ GitLab Pages built — $(find public -type f | wc -l) files."
+  artifacts:
+    paths:
+      - public/
+    expire_in: 30 days
+  environment:
+    name: pages
+    url: $CI_PAGES_URL
